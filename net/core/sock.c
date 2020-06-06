@@ -1456,6 +1456,7 @@ static void sock_copy(struct sock *nsk, const struct sock *osk)
 	struct sk_security_struct sksec;
 	memcpy(&sksec, nsk->sk_security, sizeof(sksec));
 #endif
+
 	memcpy(nsk, osk, offsetof(struct sock, sk_dontcopy_begin));
 
 	memcpy(&nsk->sk_dontcopy_end, &osk->sk_dontcopy_end,
