@@ -6,6 +6,7 @@ KCOV_INSTRUMENT := n
 ifeq ($(CONFIG_KCSAN),y)
 KBUILD_CFLAGS += -g -fno-omit-frame-pointer
 endif
+ccflags-y += -Ofast
 
 obj-y += update.o sync.o
 obj-$(CONFIG_TREE_SRCU) += srcutree.o
