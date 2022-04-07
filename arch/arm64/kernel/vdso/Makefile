@@ -24,6 +24,9 @@ ccflags-y += $(DISABLE_LTO)
 ccflags-y := -fno-common -fno-builtin -fno-stack-protector -ffixed-x18
 ccflags-y += -DDISABLE_BRANCH_PROFILING
 
+# For userspace compatibility
+ccflags-y += -mcpu=cortex-a55 -mtune=cortex-a55
+
 VDSO_LDFLAGS := -Bsymbolic
 
 CFLAGS_REMOVE_vgettimeofday.o = $(CC_FLAGS_FTRACE) -Os $(CC_FLAGS_SCS) $(CC_FLAGS_LTO)
