@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2018, 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "bw-hwmon: " fmt
@@ -80,6 +80,7 @@ static DEFINE_MUTEX(list_lock);
 
 static int use_cnt;
 static DEFINE_MUTEX(state_lock);
+static DEFINE_MUTEX(event_handle_lock);
 
 #define show_attr(name) \
 static ssize_t show_##name(struct device *dev,				\
@@ -100,7 +101,7 @@ static ssize_t store_##name(struct device *dev,				\
 	int ret;							\
 	unsigned int val;						\
 	ret = kstrtoint(buf, 10, &val);					\
-	if (ret)							\
+	if (ret < 0)							\
 		return ret;						\
 	val = max(val, _min);						\
 	val = min(val, _max);						\
@@ -144,7 +145,7 @@ static ssize_t store_list_##name(struct device *dev,			\
 	numvals = min(numvals, n - 1);					\
 	for (i = 0; i < numvals; i++) {					\
 		ret = kstrtouint(strlist[i], 10, &val);			\
-		if (ret)						\
+		if (ret < 0)						\
 			goto out;					\
 		val = max(val, _min);					\
 		val = min(val, _max);					\
@@ -234,7 +235,7 @@ static int __bw_hwmon_sw_sample_end(struct bw_hwmon *hwmon)
 
 	return wake;
 }
-
+EXPORT_SYMBOL(bw_hwmon_sample_end);
 static int __bw_hwmon_hw_sample_end(struct bw_hwmon *hwmon)
 {
 	struct devfreq *df;
@@ -420,7 +421,6 @@ static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
 		hw->up_wake_mbps = (max(MIN_MBPS, req_mbps)
 					* (100 + node->up_thres)) / 100;
 		hw->down_wake_mbps = 0;
-		hw->undo_over_req_mbps = 0;
 		thres = mbps_to_bytes(max(MIN_MBPS, req_mbps / 2),
 					node->sample_ms);
 	} else {
@@ -433,10 +433,6 @@ static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
 		 */
 		hw->up_wake_mbps = (req_mbps * (100 + node->up_thres)) / 100;
 		hw->down_wake_mbps = (meas_mbps * node->down_thres) / 100;
-		if (node->wake == UP_WAKE)
-			hw->undo_over_req_mbps = min(req_mbps, meas_mbps_zone);
-		else
-			hw->undo_over_req_mbps = 0;
 		thres = mbps_to_bytes(meas_mbps, node->sample_ms);
 	}
 
@@ -521,7 +517,7 @@ int update_bw_hwmon(struct bw_hwmon *hwmon)
 
 	mutex_lock(&df->lock);
 	ret = update_devfreq(df);
-	if (ret)
+	if (ret < 0)
 		dev_err(df->dev.parent,
 			"Unable to update freq on request!\n");
 	mutex_unlock(&df->lock);
@@ -531,6 +527,7 @@ int update_bw_hwmon(struct bw_hwmon *hwmon)
 
 	return 0;
 }
+EXPORT_SYMBOL(update_bw_hwmon);
 
 static int start_monitor(struct devfreq *df, bool init)
 {
@@ -540,14 +537,6 @@ static int start_monitor(struct devfreq *df, bool init)
 	unsigned long mbps;
 	int ret;
 
-	if (init && df->dev_suspended) {
-		node->init_pending = true;
-		return 0;
-	} else if (!init && node->init_pending) {
-		init = true;
-		node->init_pending = false;
-	}
-
 	node->prev_ts = ktime_get();
 	if (init) {
 		node->prev_ab = 0;
@@ -556,13 +545,12 @@ static int start_monitor(struct devfreq *df, bool init)
 		mbps = (df->previous_freq * node->io_percent) / 100;
 		hw->up_wake_mbps = mbps;
 		hw->down_wake_mbps = MIN_MBPS;
-		hw->undo_over_req_mbps = 0;
 		ret = hw->start_hwmon(hw, mbps);
 	} else {
 		ret = hw->resume_hwmon(hw);
 	}
 
-	if (ret) {
+	if (ret < 0) {
 		dev_err(dev, "Unable to start HW monitor! (%d)\n", ret);
 		return ret;
 	}
@@ -588,8 +576,7 @@ static void stop_monitor(struct devfreq *df, bool init)
 
 	if (init) {
 		devfreq_monitor_stop(df);
-		if (!df->dev_suspended)
-			hw->stop_hwmon(hw);
+		hw->stop_hwmon(hw);
 	} else {
 		devfreq_monitor_suspend(df);
 		hw->suspend_hwmon(hw);
@@ -615,7 +602,7 @@ static int gov_start(struct devfreq *df)
 	stat.private_data = NULL;
 	if (df->profile->get_dev_status)
 		ret = df->profile->get_dev_status(df->dev.parent, &stat);
-	if (ret || !stat.private_data)
+	if (ret < 0 || !stat.private_data)
 		dev_warn(dev, "Device doesn't take AB votes!\n");
 	else
 		node->dev_ab = stat.private_data;
@@ -625,12 +612,17 @@ static int gov_start(struct devfreq *df)
 	df->data = node;
 
 	ret = start_monitor(df, true);
-	if (ret)
+	if (ret < 0)
 		goto err_start;
 
 	ret = sysfs_create_group(&df->dev.kobj, node->attr_grp);
-	if (ret)
+	if (ret < 0)
 		goto err_sysfs;
+
+	mutex_lock(&df->lock);
+	df->min_freq = df->max_freq;
+	update_devfreq(df);
+	mutex_unlock(&df->lock);
 
 	return 0;
 
@@ -713,11 +705,8 @@ static int devfreq_bw_hwmon_get_freq(struct devfreq *df,
 {
 	struct hwmon_node *node = df->data;
 
-	if (!node)
-		return -EINVAL;
-
 	/* Suspend/resume sequence */
-	if (!node->mon_started || df->dev_suspended) {
+	if (!node->mon_started) {
 		*freq = node->resume_freq;
 		*node->dev_ab = node->resume_ab;
 		return 0;
@@ -740,7 +729,7 @@ static ssize_t throttle_adj_store(struct device *dev,
 		return -EPERM;
 
 	ret = kstrtouint(buf, 10, &val);
-	if (ret)
+	if (ret < 0)
 		return ret;
 
 	ret = node->hw->set_throttle_adj(node->hw, val);
@@ -848,7 +837,7 @@ static int devfreq_bw_hwmon_ev_handler(struct devfreq *df,
 	struct hwmon_node *node;
 	struct bw_hwmon *hw;
 
-	mutex_lock(&state_lock);
+	mutex_lock(&event_handle_lock);
 
 	switch (event) {
 	case DEVFREQ_GOV_START:
@@ -858,7 +847,7 @@ static int devfreq_bw_hwmon_ev_handler(struct devfreq *df,
 		df->profile->polling_ms = sample_ms;
 
 		ret = gov_start(df);
-		if (ret)
+		if (ret < 0)
 			goto out;
 
 		dev_dbg(df->dev.parent,
@@ -889,30 +878,19 @@ static int devfreq_bw_hwmon_ev_handler(struct devfreq *df,
 		 */
 		hw = node->hw;
 
-		if (!node->mon_started || df->dev_suspended) {
-			devfreq_interval_update(df, &sample_ms);
-			break;
-		}
-		mutex_lock(&node->mon_lock);
-		node->mon_started = false;
-		mutex_unlock(&node->mon_lock);
-
 		hw->suspend_hwmon(hw);
 		devfreq_interval_update(df, &sample_ms);
 		ret = hw->resume_hwmon(hw);
-		if (ret) {
+		if (ret < 0) {
 			dev_err(df->dev.parent,
 				"Unable to resume HW monitor (%d)\n", ret);
 			goto out;
 		}
-		mutex_lock(&node->mon_lock);
-		node->mon_started = true;
-		mutex_unlock(&node->mon_lock);
 		break;
 
 	case DEVFREQ_GOV_SUSPEND:
 		ret = gov_suspend(df);
-		if (ret) {
+		if (ret < 0) {
 			dev_err(df->dev.parent,
 				"Unable to suspend BW HW mon governor (%d)\n",
 				ret);
@@ -924,7 +902,7 @@ static int devfreq_bw_hwmon_ev_handler(struct devfreq *df,
 
 	case DEVFREQ_GOV_RESUME:
 		ret = gov_resume(df);
-		if (ret) {
+		if (ret < 0) {
 			dev_err(df->dev.parent,
 				"Unable to resume BW HW mon governor (%d)\n",
 				ret);
@@ -936,7 +914,7 @@ static int devfreq_bw_hwmon_ev_handler(struct devfreq *df,
 	}
 
 out:
-	mutex_unlock(&state_lock);
+	mutex_unlock(&event_handle_lock);
 
 	return ret;
 }
