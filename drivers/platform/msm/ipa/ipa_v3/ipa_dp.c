@@ -1848,7 +1848,9 @@ static void ipa3_wq_handle_rx(struct work_struct *work)
 	IPA_ACTIVE_CLIENTS_INC_EP(client_type);
 
 	if (sys->napi_obj) {
+		local_bh_disable();
 		napi_schedule(sys->napi_obj);
+		local_bh_enable();
 		IPA_STATS_INC_CNT(sys->napi_sch_cnt);
 	} else
 		ipa3_handle_rx(sys);
@@ -4505,7 +4507,9 @@ void __ipa_gsi_irq_rx_scedule_poll(struct ipa3_sys_context *sys)
 		clk_off = IPA_ACTIVE_CLIENTS_INC_EP_NO_BLOCK(client_type);
 
 	if (!clk_off && sys->napi_obj) {
+		local_bh_disable();
 		napi_schedule(sys->napi_obj);
+		local_bh_enable();
 		IPA_STATS_INC_CNT(sys->napi_sch_cnt);
 		return;
 	}
