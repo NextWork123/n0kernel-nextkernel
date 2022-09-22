@@ -346,7 +346,8 @@
 	};
 
 	chosen {
-		bootargs = "quiet noirqdebug nodebugmon rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=off cgroup_disable=pressure";
+
+		bootargs = "rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=off noirqdebug nosoftlockup mce=ignore_ce";
 	};
 
 	firmware: firmware {
