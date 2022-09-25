@@ -2436,9 +2436,7 @@ static int msm_drm_notifier_callback(struct notifier_block *self,
 
 	blank = evdata->data;
 	switch (*blank) {
-	case MSM_DRM_BLANK_POWERDOWN_CUST:
 	case MSM_DRM_BLANK_POWERDOWN:
-	case MSM_DRM_BLANK_NORMAL:
 		if (!screen_on)
 			goto out;
 		screen_on = false;
@@ -2448,7 +2446,7 @@ static int msm_drm_notifier_callback(struct notifier_block *self,
 					   msecs_to_jiffies(compaction_soff_delay_ms));
 		}
 		break;
-	case MSM_DRM_BLANK_UNBLANK_CUST:
+	case MSM_DRM_BLANK_UNBLANK:
 		if (screen_on)
 			goto out;
 		screen_on = true;
@@ -2815,8 +2813,6 @@ static int __init kcompactd_init(void)
 }
 subsys_initcall(kcompactd_init)
 
-extern struct drm_panel *lcd_active_panel;
-
 static int  __init scheduled_compaction_init(void)
 {
 	compaction_wq = create_freezable_workqueue("compaction_wq");
@@ -2825,11 +2821,6 @@ static int  __init scheduled_compaction_init(void)
 		return -EFAULT;
 
 	INIT_DELAYED_WORK(&compaction_work, do_compaction);
-
-	if (lcd_active_panel) {
-		drm_panel_notifier_register(lcd_active_panel,
-					    &compaction_notifier_block);
-	}
 
 	return 0;
 }
