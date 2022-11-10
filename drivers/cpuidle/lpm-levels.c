@@ -54,11 +54,8 @@ struct lpm_cluster *lpm_root_node;
 
 #define MAXSAMPLES 5
 
-#define lpm_prediction_enabled	true
-#define lpm_ipi_prediction_enabled	false
-
-static bool lpm_ipi_prediction = true;
-module_param_named(lpm_ipi_prediction, lpm_ipi_prediction, bool, 0664);
+#define lpm_prediction_enabled true
+#define lpm_ipi_prediction_enabled false
 
 struct lpm_history {
 	uint32_t resi[MAXSAMPLES];
@@ -1384,13 +1381,12 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	bool success = false;
 	const struct cpumask *cpumask = get_cpu_mask(dev->cpu);
 	ktime_t start = ktime_get();
-	uint64_t start_time = ktime_to_ns(start), end_time;
 
 	cpu_prepare(cpu, idx, true);
-	cluster_prepare(cpu->parent, cpumask, idx, true, start_time);
+	cluster_prepare(cpu->parent, cpumask, idx, true, 0);
 
 	trace_cpu_idle_enter(idx);
-	lpm_stats_cpu_enter(idx, start_time);
+	lpm_stats_cpu_enter(idx, 0);
 
 	if (need_resched())
 		goto exit;
@@ -1400,10 +1396,9 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	cpuidle_clear_idle_cpu(dev->cpu);
 
 exit:
-	end_time = ktime_to_ns(ktime_get());
-	lpm_stats_cpu_exit(idx, end_time, success);
+	lpm_stats_cpu_exit(idx, 0, success);
 
-	cluster_unprepare(cpu->parent, cpumask, idx, true, end_time, success);
+	cluster_unprepare(cpu->parent, cpumask, idx, true, 0, success);
 	cpu_unprepare(cpu, idx, true);
 	dev->last_residency = ktime_us_delta(ktime_get(), start);
 	update_history(dev, idx);
