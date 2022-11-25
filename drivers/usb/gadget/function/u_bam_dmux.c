@@ -491,7 +491,7 @@ static void gbam_free_rx_skb_idle_list(struct gbam_port *port)
 		return;
 	d = &port->data_ch;
 
-	gadget = port->port_usb->cdev->gadget;
+	gadget = port->gadget;
 
 	while (d->rx_skb_idle.qlen > 0) {
 		skb = __skb_dequeue(&d->rx_skb_idle);
@@ -1290,6 +1290,7 @@ static void gbam_port_free(enum bam_dmux_func_type func)
 	if (port) {
 		platform_driver_unregister(pdrv);
 
+		gbam_free_rx_skb_idle_list(port);
 		kfree(port);
 		bam_ports[func].port = NULL;
 	}
