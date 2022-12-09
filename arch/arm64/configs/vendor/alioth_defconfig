@@ -2014,7 +2014,7 @@ CONFIG_RMNET=y
 # CONFIG_SIS190 is not set
 # CONFIG_SMC91X is not set
 # CONFIG_EPIC100 is not set
-CONFIG_SMSC911X=y
+# CONFIG_SMSC911X is not set
 # CONFIG_SMSC9420 is not set
 # CONFIG_STMMAC_ETH is not set
 # CONFIG_HAPPYMEAL is not set
